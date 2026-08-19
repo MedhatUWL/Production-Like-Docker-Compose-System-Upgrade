@@ -9,3 +9,19 @@ groups:
         expr: rate(http_requests_total[5m]) > 100
         for: 2m
         labels: {severity: warning}
+      - alert: ApiSlow
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 2m
+        labels: {severity: warning}
+      - alert: MemoryNearlyFull
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+        for: 5m
+        labels: {severity: warning}
+      - alert: MySQLConnectionsHigh
+        expr: mysql_global_status_threads_connected > 80
+        for: 5m
+        labels: {severity: warning}
+      - alert: SSLExpirySoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 14 * 24 * 3600
+        for: 10m
+        labels: {severity: warning}
