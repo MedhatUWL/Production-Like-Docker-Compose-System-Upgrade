@@ -1,13 +1,15 @@
 import os
 import socket
+import time
 
 import pymysql
 import redis
 from flask import Flask, jsonify, request
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 app = Flask(__name__)
 requests_total = Counter("http_requests_total", "HTTP requests", ["path", "method"])
+request_duration = Histogram("http_request_duration_seconds", "HTTP request duration", ["path", "method"])
 cache = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
 
 
@@ -24,8 +26,17 @@ def database_value():
 @app.before_request
 def count_request():
     requests_total.labels(request.path, request.method).inc()
+    request.environ["request_started_at"] = time.perf_counter()
     if request.path.startswith("/api/") and request.path != "/api/health" and request.headers.get("X-API-KEY") != os.environ["API_KEY"]:
         return jsonify(error="Unauthorized"), 401
+
+
+@app.after_request
+def observe_request(response):
+    started_at = request.environ.get("request_started_at")
+    if started_at is not None:
+        request_duration.labels(request.path, request.method).observe(time.perf_counter() - started_at)
+    return response
 
 
 @app.get("/api/health")
