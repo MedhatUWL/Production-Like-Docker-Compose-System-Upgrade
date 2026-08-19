@@ -11,6 +11,7 @@ services:
 
   frontend:
     build: ./frontend
+    image: ${FRONTEND_IMAGE:-production-like-frontend:v2}
     labels:
       traefik.enable: "true"
       traefik.http.routers.frontend.rule: Host(`${APP_DOMAIN:-localhost}`)
@@ -24,9 +25,10 @@ services:
 
   api1: &api
     build: ./api
+    image: ${API_IMAGE:-production-like-api:v2}
     environment: &api-environment
       REDIS_URL: redis://redis:6379/0
-      MYSQL_HOST: mysql-primary
+      MYSQL_HOST: mysql-router
       MYSQL_DATABASE: ${MYSQL_DATABASE:-app}
       MYSQL_USER: ${MYSQL_USER:-app}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me}
@@ -35,19 +37,22 @@ services:
       traefik.enable: "true"
       traefik.http.routers.api.rule: Host(`${APP_DOMAIN:-localhost}`) && PathPrefix(`/api`)
       traefik.http.routers.api.entrypoints: web
-      traefik.http.routers.api.middlewares: api-rate-limit
       traefik.http.routers.api-secure.rule: Host(`${APP_DOMAIN:-localhost}`) && PathPrefix(`/api`)
       traefik.http.routers.api-secure.entrypoints: websecure
-      traefik.http.routers.api-secure.middlewares: api-rate-limit
       traefik.http.routers.api-secure.tls.certresolver: letsencrypt
       traefik.http.middlewares.api-rate-limit.ratelimit.average: "100"
       traefik.http.middlewares.api-rate-limit.ratelimit.period: 1m
       traefik.http.middlewares.api-rate-limit.ratelimit.burst: "20"
+      traefik.http.middlewares.api-security.forwardauth.address: http://ip-blocker:8081/check
+      traefik.http.middlewares.api-security.forwardauth.trustForwardHeader: "true"
+      traefik.http.routers.api.middlewares: api-security,api-rate-limit
+      traefik.http.routers.api-secure.middlewares: api-security,api-rate-limit
       traefik.http.services.api.loadbalancer.server.port: "8000"
     networks: [public, private]
     depends_on:
       redis: {condition: service_healthy}
-      mysql-primary: {condition: service_healthy}
+      mysql-router: {condition: service_started}
+      ip-blocker: {condition: service_healthy}
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s
@@ -191,6 +196,43 @@ services:
     volumes: [/:/rootfs:ro, /var/run:/var/run:ro, /sys:/sys:ro, /var/lib/docker/:/var/lib/docker:ro]
     networks: [private]
     restart: unless-stopped
+
+  ip-blocker:
+    image: ${IP_BLOCKER_IMAGE:-production-like-ip-blocker:v2}
+    build: ./security
+    environment:
+      BLOCKED_IPS: ${BLOCKED_IPS:-203.0.113.10,198.51.100.25}
+    networks: [private]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.16.0
+    environment:
+      DATA_SOURCE_NAME: ${MYSQL_USER:-app}:${MYSQL_PASSWORD:-change-me}@(mysql-router:3306)/
+    networks: [private]
+    depends_on: [mysql-router]
+    restart: unless-stopped
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.27.0
+    volumes: [./monitoring/blackbox.yml:/etc/blackbox_exporter/config.yml:ro]
+    networks: [private]
+    restart: unless-stopped
+
+  load-test:
+    image: grafana/k6:0.52.0
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
+      API_KEY: ${API_KEY:-demo-key}
+    volumes: [./load-test:/scripts:ro]
+    networks: [public]
+    profiles: [load-test]
+    entrypoint: [k6, run, /scripts/api.js]
 
 networks:
   public: {}
