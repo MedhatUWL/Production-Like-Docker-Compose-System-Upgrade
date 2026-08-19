@@ -69,7 +69,8 @@ services:
     restart: unless-stopped
 
   mysql-primary:
-    image: mysql:8.4
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    command: [--server-id=1, --log-bin=mysql-bin, --binlog-format=ROW, --gtid-mode=ON, --enforce-gtid-consistency=ON, --log-replica-updates=ON]
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-app}
       MYSQL_USER: ${MYSQL_USER:-app}
@@ -85,20 +86,47 @@ services:
     restart: unless-stopped
 
   mysql-replica:
-    image: mysql:8.4
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    command: [--server-id=2, --relay-log=relay-bin, --read-only=ON, --gtid-mode=ON, --enforce-gtid-consistency=ON]
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-app}
       MYSQL_USER: ${MYSQL_USER:-app}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-root-me}
-    volumes: [mysql-replica-data:/var/lib/mysql]
+    volumes: [mysql-replica-data:/var/lib/mysql, ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro]
     networks: [private]
+    healthcheck:
+      test: [CMD-SHELL, "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mysql-replication-init:
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-root-me}
+      MYSQL_USER: ${MYSQL_USER:-app}
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-change-replication-me}
+    volumes: [./mysql/replication-init.sh:/replication-init.sh:ro]
+    networks: [private]
+    depends_on:
+      mysql-primary: {condition: service_healthy}
+      mysql-replica: {condition: service_healthy}
+    entrypoint: [/bin/sh, /replication-init.sh]
+    restart: "no"
+
+  mysql-router:
+    image: haproxy:3.2-alpine
+    volumes: [./mysql/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro]
+    networks: [private]
+    depends_on: [mysql-primary, mysql-replica]
     restart: unless-stopped
 
   mysql-backup:
     image: mysql:8.4
     environment:
-      MYSQL_HOST: mysql-primary
+      MYSQL_HOST: mysql-router
       MYSQL_DATABASE: ${MYSQL_DATABASE:-app}
       MYSQL_USER: ${MYSQL_USER:-app}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me}
