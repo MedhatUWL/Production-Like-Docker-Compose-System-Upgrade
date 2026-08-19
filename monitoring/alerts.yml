@@ -1,0 +1,11 @@
+groups:
+  - name: platform
+    rules:
+      - alert: ContainerOrServiceDown
+        expr: up == 0
+        for: 2m
+        labels: {severity: critical}
+      - alert: ApiRequestRateHigh
+        expr: rate(http_requests_total[5m]) > 100
+        for: 2m
+        labels: {severity: warning}
