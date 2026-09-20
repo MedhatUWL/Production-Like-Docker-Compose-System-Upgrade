@@ -3,7 +3,7 @@ name: production-like
 services:
   traefik:
     image: traefik:v3.5.0
-    command: ["--api.dashboard=true", "--api.insecure=true", "--providers.docker=true", "--providers.docker.exposedbydefault=false", "--entrypoints.web.address=:80", "--entrypoints.websecure.address=:443", "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-ops@example.com}", "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json", "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web", "--metrics.prometheus=true", "--accesslog=true"]
+    command: ["--api.dashboard=true", "--api.insecure=true", "--providers.docker=true", "--providers.docker.exposedbydefault=false", "--entrypoints.web.address=:80", "--entrypoints.web.http.redirections.entrypoint.to=websecure", "--entrypoints.web.http.redirections.entrypoint.scheme=https", "--entrypoints.web.http.redirections.entrypoint.permanent=true", "--entrypoints.websecure.address=:443", "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-ops@example.com}", "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json", "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web", "--metrics.prometheus=true", "--accesslog=true"]
     ports: ["80:80", "443:443", "127.0.0.1:8080:8080"]
     volumes: [/var/run/docker.sock:/var/run/docker.sock:ro, ./letsencrypt:/letsencrypt]
     networks: [public, private]
@@ -48,7 +48,7 @@ services:
       traefik.http.routers.api.middlewares: api-security,api-rate-limit
       traefik.http.routers.api-secure.middlewares: api-security,api-rate-limit
       traefik.http.services.api.loadbalancer.server.port: "8000"
-    networks: [public, private]
+    networks: [private]
     depends_on:
       redis: {condition: service_healthy}
       mysql-router: {condition: service_started}
